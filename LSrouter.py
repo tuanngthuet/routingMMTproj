@@ -1,8 +1,6 @@
 ####################################################
 # LSrouter.py
-# Name:
-# HUID:
-#####################################################
+####################################################
 
 from router import Router
 from packet import Packet
@@ -19,17 +17,24 @@ class LSrouter(Router):
         self.heartbeat_time = heartbeat_time
         self.last_time = 0
 
+        # port -> (neighbor, cost)
         self.neighbors = {}
 
-        self.lsdb = {}
+        # LS database
+        # router -> {neighbor: cost}
+        self.lsdb = {self.addr: {}}
 
-        self.seq_nums = {}
+        # latest sequence number seen
+        self.seq_nums = {self.addr: 0}
 
         self.my_seq = 0
 
+        # destination -> output port
         self.forwarding_table = {}
 
-        self.lsdb[self.addr] = {}
+    #################################################
+    # Helpers
+    #################################################
 
     def create_lsp(self):
         return {
@@ -38,34 +43,43 @@ class LSrouter(Router):
             "links": self.lsdb[self.addr]
         }
 
-    def flood_lsp(self, except_port=None):
+    def flood_lsp(self, except_port=None, content=None):
 
-        packet = Packet(
+        if content is None:
+            content = json.dumps(self.create_lsp())
+
+        pkt = Packet(
             Packet.ROUTING,
             self.addr,
             self.addr,
-            json.dumps(self.create_lsp())
+            content
         )
 
         for port in self.neighbors:
             if port != except_port:
-                self.send(port, packet)
+                self.send(port, pkt)
 
     def recompute_routes(self):
 
         graph = {}
 
-        for node, nbrs in self.lsdb.items():
+        #
+        # Build graph from LSDB
+        #
+        for node, links in self.lsdb.items():
 
             graph.setdefault(node, {})
 
-            for nbr, cost in nbrs.items():
-
-                graph[node][nbr] = cost
+            for nbr, cost in links.items():
 
                 graph.setdefault(nbr, {})
+
+                graph[node][nbr] = cost
                 graph[nbr][node] = cost
 
+        #
+        # Dijkstra
+        #
         dist = {self.addr: 0}
         prev = {}
 
@@ -73,14 +87,14 @@ class LSrouter(Router):
 
         while pq:
 
-            cur_cost, node = heapq.heappop(pq)
+            cost, node = heapq.heappop(pq)
 
-            if cur_cost > dist[node]:
+            if cost > dist[node]:
                 continue
 
             for nbr, edge_cost in graph.get(node, {}).items():
 
-                new_cost = cur_cost + edge_cost
+                new_cost = cost + edge_cost
 
                 if nbr not in dist or new_cost < dist[nbr]:
 
@@ -92,6 +106,9 @@ class LSrouter(Router):
                         (new_cost, nbr)
                     )
 
+        #
+        # Build forwarding table
+        #
         self.forwarding_table = {}
 
         for dst in dist:
@@ -99,21 +116,29 @@ class LSrouter(Router):
             if dst == self.addr:
                 continue
 
-            cur = dst
+            hop = dst
 
-            while cur in prev and prev[cur] != self.addr:
-                cur = prev[cur]
+            while hop in prev and prev[hop] != self.addr:
+                hop = prev[hop]
 
-            if cur in prev and prev[cur] == self.addr:
+            if hop == dst and hop not in prev:
+                continue
 
-                for port, (nbr, _) in self.neighbors.items():
+            for port, (nbr, _) in self.neighbors.items():
 
-                    if nbr == cur:
-                        self.forwarding_table[dst] = port
-                        break
+                if nbr == hop:
+                    self.forwarding_table[dst] = port
+                    break
+
+    #################################################
+    # Router API
+    #################################################
 
     def handle_packet(self, port, packet):
 
+        #
+        # Data packet
+        #
         if packet.is_traceroute:
 
             if packet.dst_addr in self.forwarding_table:
@@ -126,6 +151,9 @@ class LSrouter(Router):
 
             return
 
+        #
+        # Routing packet
+        #
         msg = json.loads(packet.content)
 
         router = msg["router"]
@@ -134,16 +162,10 @@ class LSrouter(Router):
 
         old_seq = self.seq_nums.get(router, -1)
 
-        if seq < old_seq:
-            return
-
-        changed = (
-            router not in self.lsdb
-            or self.lsdb[router] != links
-            or seq > old_seq
-        )
-
-        if not changed:
+        #
+        # Ignore old LSP
+        #
+        if seq <= old_seq:
             return
 
         self.seq_nums[router] = seq
@@ -151,15 +173,19 @@ class LSrouter(Router):
 
         self.recompute_routes()
 
-        self.flood_lsp(except_port=port)
+        self.flood_lsp(except_port=port, content=packet.content)
 
     def handle_new_link(self, port, endpoint, cost):
 
-        self.neighbors[port] = (endpoint, cost)
+        self.neighbors[port] = (
+            endpoint,
+            cost
+        )
 
         self.lsdb[self.addr][endpoint] = cost
 
         self.my_seq += 1
+        self.seq_nums[self.addr] = self.my_seq
 
         self.recompute_routes()
 
@@ -178,6 +204,7 @@ class LSrouter(Router):
             del self.lsdb[self.addr][endpoint]
 
         self.my_seq += 1
+        self.seq_nums[self.addr] = self.my_seq
 
         self.recompute_routes()
 
@@ -194,7 +221,8 @@ class LSrouter(Router):
     def __repr__(self):
 
         return (
-            f"LSrouter({self.addr})\n"
+            f"Router={self.addr}\n"
             f"Neighbors={self.neighbors}\n"
-            f"Forwarding={self.forwarding_table}"
+            f"Forwarding={self.forwarding_table}\n"
+            f"LSDB={self.lsdb}"
         )
