@@ -31,9 +31,6 @@ class DVrouter(Router):
         # dst -> port  — forwarding table
         self.forwarding_table = {}
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _recompute(self):
         """Recompute DV and forwarding table using Bellman-Ford. Return True if changed."""
@@ -67,9 +64,6 @@ class DVrouter(Router):
             pkt = Packet(Packet.ROUTING, self.addr, nbr, json.dumps(adv))
             self.send(port, pkt)
 
-    # ------------------------------------------------------------------
-    # Router interface
-    # ------------------------------------------------------------------
 
     def handle_packet(self, port, packet):
         if packet.is_traceroute:
