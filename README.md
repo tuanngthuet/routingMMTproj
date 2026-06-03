@@ -1,4 +1,9 @@
 # Project 2: Intra-Domain Routing Algorithms
+## SV thực hiện
+| MSV | Họ tên |
+| ----- | ----- |
+| 24020347 | Nguyễn Thiên Tuấn |
+| 24020023 | Phạm Quang Anh |
 
 ## Objective
 
